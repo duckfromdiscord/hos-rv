@@ -24,7 +24,7 @@ fn is_allowed(req: HttpRequest, data: Data<AppState>) -> bool {
         return true;
     }
     if let Some(val) = req.peer_addr() {
-        val.ip().to_string() == "127.0.0.1"
+        val.ip().to_string() == data.allowed_ip
     } else {
         false
     }
@@ -150,7 +150,13 @@ async fn main() -> std::io::Result<()> {
             .short('b')
             .value_name("BLOCK")
             .num_args(0)
-            .help("Only allow requests from 127.0.0.1")
+            .help("Only allow requests from 127.0.0.1 or provided IP")
+        )
+        .arg(
+            Arg::new("block_addr")
+            .short('a')
+            .value_name("BLOCK_ADDR")
+            .help("Optional, the IP you choose to whitelist")
         )
         .get_matches();
 
@@ -170,6 +176,11 @@ async fn main() -> std::io::Result<()> {
     let should_block: bool = matches
         .get_flag("block");
 
+    let allowed_ip: String = matches
+    .get_one::<String>("block_addr")
+    .unwrap_or(&"127.0.0.1".to_string())
+    .to_string();
+
     log::info!(
         "starting HTTP server at http://{}:{}",
         listen_ip,
@@ -177,9 +188,9 @@ async fn main() -> std::io::Result<()> {
     );
 
     if should_block {
-        log::warn!("Blocking all non-127.0.0.1 requests");
+        log::warn!("Blocking all non-{} requests", allowed_ip);
     } else {
-        log::warn!("Responding to requests from any address. Remember to run with `-b` to block requests that don't come from localhost.");
+        log::warn!("Responding to requests from any address. Remember to run with `-b` to block requests that don't come from {}.", allowed_ip);
     }
 
     let (tx, _) = broadcast::channel::<web::Bytes>(128);
@@ -187,6 +198,7 @@ async fn main() -> std::io::Result<()> {
     let state = web::Data::new(AppState {
         hos_connections: HashMap::new().into(),
         should_block,
+        allowed_ip,
     });
 
 
