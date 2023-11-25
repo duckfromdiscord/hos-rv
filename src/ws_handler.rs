@@ -73,7 +73,7 @@ pub async fn hos_ws(
                                                     incoming.clone().id.unwrap_or("[no id]".to_string()),
                                                     connection_id.to_string()
                                                 );
-                                                channel.send(content.to_string()).unwrap();
+                                                channel.send(content.to_string());
                                             } else {
                                                 log::warn!("Channel for request id {} not found in session ID {}",
                                                     incoming.clone().id.unwrap_or("[no id]".to_string()),

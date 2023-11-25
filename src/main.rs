@@ -10,7 +10,7 @@ use std::{collections::HashMap, time::Duration};
 use hos_rv::state::AppState;
 use base64::{Engine as _, engine::general_purpose};
 
-const DEFAULT_TIMEOUT_SECS: Duration = Duration::new(10,0);
+const DEFAULT_TIMEOUT_SECS: Duration = Duration::new(3,0);
 
 async fn hos_ws_route(req: HttpRequest, stream: web::Payload, data: web::Data<AppState>) -> Result<HttpResponse, Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
@@ -99,9 +99,13 @@ pub async fn handle_pid_get(
     let mut conns = data.hos_connections.lock().await;
     for conn in conns.values_mut() {
         if conn.pairing_code.clone().unwrap_or("".to_string()) == *pairing_id {
+                println!("a");
                 let recv = conn.req("GET", &path.clone()).await.unwrap().clone();
+                println!("b");
                 drop(conns);
+                println!("c");
                 let bytes = await_hos_recv(recv, DEFAULT_TIMEOUT_SECS).unwrap();
+                println!("d");
                 return HttpResponse::build(StatusCode::OK).content_type(ContentType::json()).body(bytes);
         } else {
             return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).into();
@@ -127,6 +131,7 @@ pub async fn handle_sid_get(
     let mut conns = data.hos_connections.lock().await;
     if let Some(conn) = conns.get_mut(connection_id) {
         let recv = conn.req("GET", &path).await.unwrap().clone();
+        drop(conns);
         let bytes = await_hos_recv(recv, DEFAULT_TIMEOUT_SECS).unwrap();
         return HttpResponse::build(StatusCode::OK).content_type(ContentType::json()).body(bytes);
     } else {
