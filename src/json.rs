@@ -26,7 +26,6 @@ pub struct HOSOutgoingReq {
     pub id: Option<String>,
 }
 
-
 pub fn hos_request(method: &str, url: &str, id: String) -> Result<String, serde_json::Error> {
     serde_json::to_string(&HOSOutgoingReq {
         _type: "request".to_string(),
@@ -35,8 +34,6 @@ pub fn hos_request(method: &str, url: &str, id: String) -> Result<String, serde_
         id: Some(id),
     })
 }
-
-
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 pub struct HOSConnectionList {

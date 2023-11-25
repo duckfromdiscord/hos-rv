@@ -1,18 +1,22 @@
+use actix_web::get;
 use actix_web::{
-    middleware, rt, web::{self, Data}, App, Error, HttpRequest, HttpResponse, HttpServer, http::{StatusCode, header::ContentType}
+    http::{header::ContentType, StatusCode},
+    middleware, rt,
+    web::{self, Data},
+    App, Error, HttpRequest, HttpResponse, HttpServer,
 };
 use clap::{Arg, Command};
-use crossbeam::channel::Receiver;
-use hos_rv::{ws_handler, json::HOSConnectionList};
-use tokio::sync::broadcast;
-use actix_web::get;
-use std::{collections::HashMap, time::Duration};
 use hos_rv::state::AppState;
-use base64::{Engine as _, engine::general_purpose};
+use hos_rv::{json::HOSConnectionList, ws_handler};
+use std::{collections::HashMap, time::Duration};
+use tokio::sync::broadcast;
+use uuid::Uuid;
 
-const DEFAULT_TIMEOUT_SECS: Duration = Duration::new(3,0);
-
-async fn hos_ws_route(req: HttpRequest, stream: web::Payload, data: web::Data<AppState>) -> Result<HttpResponse, Error> {
+async fn hos_ws_route(
+    req: HttpRequest,
+    stream: web::Payload,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
     rt::spawn(ws_handler::hos_ws(session, msg_stream, data));
 
@@ -32,107 +36,71 @@ fn is_allowed(req: HttpRequest, data: Data<AppState>) -> bool {
 
 fn full_query_path(req: HttpRequest, path: &str) -> String {
     match req.query_string().is_empty() {
-        true => {
-            path.to_string()
-        },
-        false => {
-            path.to_string() + "?" + req.query_string()
-        }
+        true => path.to_string(),
+        false => path.to_string() + "?" + req.query_string(),
     }
-}
-
-fn await_hos_recv(recv: Receiver<String>, timeout: Duration) -> Option<Vec<u8>> {
-    match recv.recv_timeout(timeout) {
-        Ok(received_data) => {
-            let b64 = received_data.to_string();
-            let bytes = general_purpose::STANDARD.decode(b64).unwrap();
-            Some(bytes)
-        },
-        Err(_) => {
-            None
-        }
-    }
-    
 }
 
 #[get("/list")]
-pub async fn handle_list_req(
-    req: HttpRequest,
-    data: Data<AppState>,
-) -> HttpResponse {
-
+pub async fn handle_list_req(req: HttpRequest, data: Data<AppState>) -> HttpResponse {
     if !(is_allowed(req.clone(), data.clone())) {
         return HttpResponse::build(StatusCode::UNAUTHORIZED).into();
     }
 
     let mut connections: Vec<(String, String)> = vec![];
-
-    let mut conns = data.hos_connections.lock().await;
-    for conn in conns.values_mut() {
-        connections.push((conn.connection_id.to_string(), conn.pairing_code.clone().unwrap_or("".to_string())));
+    let conns = data.hos_connections.read();
+    for conn in conns.values() {
+        let conn = conn.lock().await;
+        connections.push((
+            conn.connection_id.to_string(),
+            conn.pairing_code.clone().unwrap_or("".to_string()),
+        ));
     }
 
+    let connection_list = HOSConnectionList { connections };
 
-    let connection_list = HOSConnectionList {
-        connections,
-    };
-
-    HttpResponse::build(StatusCode::OK).content_type(ContentType::json()).body(
-        serde_json::to_string(&connection_list).unwrap()
-    )
-}
-
-#[get("pid/{pairing_id}/{tail:.*}")]
-pub async fn handle_pid_get(
-    req: HttpRequest,
-    info: web::Path<(String, String)>,
-    data: Data<AppState>
-) -> HttpResponse {
-
-    if !(is_allowed(req.clone(), data.clone())) {
-        return HttpResponse::build(StatusCode::UNAUTHORIZED).into();
-    }
-
-    let pairing_id = &info.0;
-    let path = full_query_path(req, &info.1);
-    
-    let mut conns = data.hos_connections.lock().await;
-    for conn in conns.values_mut() {
-        if conn.pairing_code.clone().unwrap_or("".to_string()) == *pairing_id {
-                let recv = conn.req("GET", &path.clone()).await.unwrap().clone();
-                drop(conns);
-                let bytes = await_hos_recv(recv, DEFAULT_TIMEOUT_SECS).unwrap();
-                return HttpResponse::build(StatusCode::OK).content_type(ContentType::json()).body(bytes);
-        } else {
-            return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).into();
-        }
-    }
-    HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).into()
+    HttpResponse::build(StatusCode::OK)
+        .content_type(ContentType::json())
+        .body(serde_json::to_string(&connection_list).unwrap())
 }
 
 #[get("sid/{session_id}/{tail:.*}")]
 pub async fn handle_sid_get(
     req: HttpRequest,
     info: web::Path<(String, String)>,
-    data: Data<AppState>
+    data: Data<AppState>,
 ) -> HttpResponse {
-
     if !(is_allowed(req.clone(), data.clone())) {
         return HttpResponse::build(StatusCode::UNAUTHORIZED).into();
     }
 
     let connection_id = &info.0;
     let path = full_query_path(req, &info.1);
-    
-    let mut conns = data.hos_connections.lock().await;
+
+    let request_id: Uuid;
+    let mut conns = data.hos_connections.write();
     if let Some(conn) = conns.get_mut(connection_id) {
-        let recv = conn.req("GET", &path).await.unwrap().clone();
+        request_id = conn.lock().await.req("GET", &path).await.unwrap().clone();
         drop(conns);
-        let bytes = await_hos_recv(recv, DEFAULT_TIMEOUT_SECS).unwrap();
-        return HttpResponse::build(StatusCode::OK).content_type(ContentType::json()).body(bytes);
     } else {
-        return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).into();
+        return HttpResponse::build(StatusCode::NOT_FOUND).into();
+    };
+
+    for _ in 1..=10 {
+        tokio::time::sleep(Duration::new(1, 0)).await;
+        let conns = data.hos_connections.read();
+        let conn = conns.get(connection_id).unwrap();
+        for x in &conn.lock().await.incoming {
+            if x.clone().id.unwrap_or("".to_string()) == request_id.to_string() {
+                return HttpResponse::build(StatusCode::OK)
+                    .content_type(ContentType::json())
+                    .body(x.content.clone().unwrap());
+            }
+        }
+        drop(conns);
     }
+
+    return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).into();
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -147,16 +115,16 @@ async fn main() -> std::io::Result<()> {
         )
         .arg(
             Arg::new("block")
-            .short('b')
-            .value_name("BLOCK")
-            .num_args(0)
-            .help("Only allow requests from 127.0.0.1 or provided IP")
+                .short('b')
+                .value_name("BLOCK")
+                .num_args(0)
+                .help("Only allow requests from 127.0.0.1 or provided IP"),
         )
         .arg(
             Arg::new("block_addr")
-            .short('a')
-            .value_name("BLOCK_ADDR")
-            .help("Optional, the IP you choose to whitelist")
+                .short('a')
+                .value_name("BLOCK_ADDR")
+                .help("Optional, the IP you choose to whitelist"),
         )
         .get_matches();
 
@@ -172,14 +140,13 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or(&"9003".to_string())
         .parse::<u16>()
         .expect("Invalid port");
-    
-    let should_block: bool = matches
-        .get_flag("block");
+
+    let should_block: bool = matches.get_flag("block");
 
     let allowed_ip: String = matches
-    .get_one::<String>("block_addr")
-    .unwrap_or(&"127.0.0.1".to_string())
-    .to_string();
+        .get_one::<String>("block_addr")
+        .unwrap_or(&"127.0.0.1".to_string())
+        .to_string();
 
     log::info!(
         "starting HTTP server at http://{}:{}",
@@ -201,12 +168,10 @@ async fn main() -> std::io::Result<()> {
         allowed_ip,
     });
 
-
     HttpServer::new(move || {
         App::new()
-        .app_data(state.clone())
+            .app_data(state.clone())
             .service(handle_list_req)
-            .service(handle_pid_get)
             .service(handle_sid_get)
             .service(web::resource("/ws").route(web::get().to(hos_ws_route)))
             .app_data(web::Data::new(tx.clone()))
