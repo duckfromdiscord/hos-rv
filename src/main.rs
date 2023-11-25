@@ -11,6 +11,7 @@ use hos_rv::{json::HOSConnectionList, ws_handler};
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::broadcast;
 use uuid::Uuid;
+use base64::{Engine as _, engine::general_purpose};
 
 async fn hos_ws_route(
     req: HttpRequest,
@@ -92,9 +93,11 @@ pub async fn handle_sid_get(
         let conn = conns.get(connection_id).unwrap();
         for x in &conn.lock().await.incoming {
             if x.clone().id.unwrap_or("".to_string()) == request_id.to_string() {
+                let b64 = x.content.clone().unwrap().to_string();
+                let bytes = general_purpose::STANDARD.decode(b64).unwrap();
                 return HttpResponse::build(StatusCode::OK)
                     .content_type(ContentType::json())
-                    .body(x.content.clone().unwrap());
+                    .body(bytes);
             }
         }
         drop(conns);
