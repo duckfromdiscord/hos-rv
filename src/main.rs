@@ -99,13 +99,9 @@ pub async fn handle_pid_get(
     let mut conns = data.hos_connections.lock().await;
     for conn in conns.values_mut() {
         if conn.pairing_code.clone().unwrap_or("".to_string()) == *pairing_id {
-                println!("a");
                 let recv = conn.req("GET", &path.clone()).await.unwrap().clone();
-                println!("b");
                 drop(conns);
-                println!("c");
                 let bytes = await_hos_recv(recv, DEFAULT_TIMEOUT_SECS).unwrap();
-                println!("d");
                 return HttpResponse::build(StatusCode::OK).content_type(ContentType::json()).body(bytes);
         } else {
             return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).into();
