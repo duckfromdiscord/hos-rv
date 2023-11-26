@@ -27,6 +27,7 @@ pub async fn hos_ws(
                 session: debug_ignore::DebugIgnore(session.clone()),
                 pairing_code: pairing_code.clone(),
                 connection_id,
+                dead: false,
             }
             .into(),
         ),

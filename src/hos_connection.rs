@@ -14,20 +14,28 @@ pub struct HOSConnection {
     pub session: DebugIgnore<Session>,
     pub pairing_code: Option<String>,
     pub connection_id: Uuid,
+    pub dead: bool,
 }
 
 impl HOSConnection {
-    pub async fn req(&mut self, method: &str, url: &str) -> Result<Uuid, serde_json::Error> {
+    pub async fn req(&mut self, method: &str, url: &str) -> Result<(Uuid, bool), serde_json::Error> {
         let request_id: Uuid = Uuid::new_v4();
         let request_text = hos_request(method, url, request_id.to_string());
         match request_text {
             Ok(text) => {
-                self.session.text(text).await.unwrap();
+                match self.session.text(text).await {
+                    Ok(_) => {
+                        self.dead = false;
+                    },
+                    Err(_) => {
+                        self.dead = true;
+                    }
+                }
             }
             Err(err) => {
                 return Err(err);
             }
         }
-        Ok(request_id)
+        Ok((request_id, self.dead))
     }
 }

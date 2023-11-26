@@ -6,7 +6,7 @@ use actix_web::{
     App, Error, HttpRequest, HttpResponse, HttpServer,
 };
 use clap::{Arg, Command};
-use hos_rv::state::AppState;
+use hos_rv::state::{AppState, prune_with_mut_hashmap};
 use hos_rv::{json::HOSConnectionList, ws_handler};
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::broadcast;
@@ -79,30 +79,42 @@ pub async fn handle_sid_get(
     let path = full_query_path(req, &info.1);
 
     let request_id: Uuid;
+    let dead: bool;
+
     let mut conns = data.hos_connections.write();
     if let Some(conn) = conns.get_mut(connection_id) {
-        request_id = conn.lock().await.req("GET", &path).await.unwrap().clone();
+        // we have to detect dead connections here
+        // because this is when we have a write handle
+        // and also when we send a message.
+        // we can only detect a dead connection when sending a message fails
+        (request_id, dead) = conn.lock().await.req("GET", &path).await.unwrap().clone();
         drop(conns);
     } else {
         return HttpResponse::build(StatusCode::NOT_FOUND).into();
     };
 
-    for _ in 1..=10 {
-        tokio::time::sleep(Duration::new(1, 0)).await;
-        let conns = data.hos_connections.read();
-        let conn = conns.get(connection_id).unwrap();
-        for x in &conn.lock().await.incoming {
-            if x.clone().id.unwrap_or("".to_string()) == request_id.to_string() {
-                let b64 = x.content.clone().unwrap().to_string();
-                let bytes = general_purpose::STANDARD.decode(b64).unwrap();
-                return HttpResponse::build(StatusCode::OK)
-                    .content_type(ContentType::json())
-                    .body(bytes);
+    // skip to pruning if we can't talk to the connection matching our requested session id
+    // otherwise we have to waste time sleeping and retrying
+    if !dead {
+        for _ in 1..=10 {
+            tokio::time::sleep(Duration::new(1, 0)).await;
+            let conns = data.hos_connections.read();
+            let conn = conns.get(connection_id).unwrap();
+            for x in &conn.lock().await.incoming {
+                if x.clone().id.unwrap_or("".to_string()) == request_id.to_string() {
+                    let b64 = x.content.clone().unwrap().to_string();
+                    let bytes = general_purpose::STANDARD.decode(b64).unwrap();
+                    return HttpResponse::build(StatusCode::OK)
+                        .content_type(ContentType::json())
+                        .body(bytes);
+                }
             }
+            drop(conns);
         }
-        drop(conns);
     }
 
+    // prune with a write handle so that we can both detect and remove dead connections
+    prune_with_mut_hashmap(&mut data.hos_connections.write()).await;
     return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).into();
 }
 
