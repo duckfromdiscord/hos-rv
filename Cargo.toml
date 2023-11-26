@@ -9,7 +9,7 @@ edition = "2021"
 actix-web = "4.4.0"
 actix-ws = "0.2.5"
 base64 = "0.21.5"
-clap = "4.4.8"
+clap = { version = "4.4.8", features = ["env"] }
 debug-ignore = "1.0.5"
 env_logger = "0.10.1"
 futures-util = { version = "0.3.29", features = ["std"] }

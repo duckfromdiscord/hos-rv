@@ -5,13 +5,13 @@ use actix_web::{
     web::{self, Data},
     App, Error, HttpRequest, HttpResponse, HttpServer,
 };
+use base64::{engine::general_purpose, Engine as _};
 use clap::{Arg, Command};
-use hos_rv::state::{AppState, prune_with_mut_hashmap};
+use hos_rv::state::{prune_with_mut_hashmap, AppState};
 use hos_rv::{json::HOSConnectionList, ws_handler};
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use base64::{Engine as _, engine::general_purpose};
 
 async fn hos_ws_route(
     req: HttpRequest,
@@ -25,13 +25,24 @@ async fn hos_ws_route(
 }
 
 fn is_allowed(req: HttpRequest, data: Data<AppState>) -> bool {
-    if data.should_block == false {
-        return true;
-    }
-    if let Some(val) = req.peer_addr() {
-        val.ip().to_string() == data.allowed_ip
-    } else {
-        false
+    match &data.required_passwd {
+        Some(required_passwd) => match req.headers().get("HOS-PASSWD") {
+            Some(supplied_passwd) => {
+                return *required_passwd
+                    == String::from_utf8(supplied_passwd.as_bytes().to_vec()).unwrap();
+            }
+            None => false,
+        },
+        None => {
+            if data.should_block == false {
+                return true;
+            }
+            if let Some(val) = req.peer_addr() {
+                val.ip().to_string() == data.allowed_ip
+            } else {
+                false
+            }
+        }
     }
 }
 
@@ -141,6 +152,13 @@ async fn main() -> std::io::Result<()> {
                 .value_name("BLOCK_ADDR")
                 .help("Optional, the IP you choose to whitelist"),
         )
+        .arg(
+            Arg::new("lock_passwd")
+            .short('l')
+            .value_name("LOCK_PASSWD")
+            .env("HOS_LOCK_PASSWD")
+            .help("An optional password to be required in headers to access lists. Only supply if you want to allow certain requests to accept a header \"HOS-PASSWD\" of a certain value. Will ignore `-b`."),
+        )
         .get_matches();
 
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
@@ -163,6 +181,16 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or(&"127.0.0.1".to_string())
         .to_string();
 
+    let required_passwd: Option<String> = matches
+        .get_one::<String>("lock_passwd")
+        .map(|x| x.to_string());
+
+    if required_passwd.clone().is_some() {
+        log::warn!(
+            "Using a HOS lock password from either the command line or an environment variable."
+        );
+    }
+
     log::info!(
         "starting HTTP server at http://{}:{}",
         listen_ip,
@@ -181,6 +209,7 @@ async fn main() -> std::io::Result<()> {
         hos_connections: HashMap::new().into(),
         should_block,
         allowed_ip,
+        required_passwd,
     });
 
     HttpServer::new(move || {

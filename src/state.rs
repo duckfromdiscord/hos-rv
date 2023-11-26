@@ -1,5 +1,5 @@
 use crate::hos_connection::HOSConnection;
-use parking_lot::{RwLock, RawRwLock, RwLockWriteGuard};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -8,6 +8,7 @@ pub struct AppState {
     pub hos_connections: RwLock<HashMap<String, Arc<Mutex<HOSConnection>>>>,
     pub should_block: bool,
     pub allowed_ip: String,
+    pub required_passwd: Option<String>,
 }
 
 pub async fn prune_with_mut_hashmap(hashmap: &mut HashMap<String, Arc<Mutex<HOSConnection>>>) {
