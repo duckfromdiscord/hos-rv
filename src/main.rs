@@ -59,6 +59,8 @@ pub async fn handle_list_req(req: HttpRequest, data: Data<AppState>) -> HttpResp
         return HttpResponse::build(StatusCode::UNAUTHORIZED).into();
     }
 
+    prune_with_mut_hashmap(&mut data.hos_connections.write()).await;
+
     let mut connections: Vec<(String, String)> = vec![];
     let conns = data.hos_connections.read();
     for conn in conns.values() {

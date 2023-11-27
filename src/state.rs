@@ -14,8 +14,8 @@ pub struct AppState {
 pub async fn prune_with_mut_hashmap(hashmap: &mut HashMap<String, Arc<Mutex<HOSConnection>>>) {
     let mut dead_keys: Vec<String> = vec![];
     for key in hashmap.keys() {
-        let connection = hashmap.get(key).unwrap().lock().await;
-        let dead = connection.dead;
+        let mut connection = hashmap.get(key).unwrap().lock().await;
+        let dead = connection.dead || connection.session.ping(b"").await.is_err();
         drop(connection);
         if dead {
             dead_keys.push(key.to_string());
