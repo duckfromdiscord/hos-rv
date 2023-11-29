@@ -131,6 +131,7 @@ pub async fn handle_sid_get(
     return HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).into();
 }
 
+#[cfg(not(feature = "shuttle"))]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
     let matches = Command::new("hos-rv")
@@ -227,4 +228,47 @@ async fn main() -> std::io::Result<()> {
     .bind((listen_ip, listen_port))?
     .run()
     .await
+}
+
+#[cfg(feature = "shuttle")]
+use actix_web::web::ServiceConfig;
+
+#[cfg(feature = "shuttle")]
+use shuttle_actix_web::ShuttleActixWeb;
+
+#[cfg(feature = "shuttle")]
+use shuttle_secrets::SecretStore;
+
+#[cfg(feature = "shuttle")]
+#[shuttle_runtime::main]
+async fn main(
+    #[shuttle_secrets::Secrets] secret_store: SecretStore,
+) -> ShuttleActixWeb<impl FnOnce(&mut ServiceConfig) + Send + Clone + 'static> {
+    log::info!("Starting hos-rv shuttle server");
+
+    let (tx, _) = broadcast::channel::<web::Bytes>(128);
+
+    let state = web::Data::new(AppState {
+        hos_connections: HashMap::new().into(),
+        should_block: false,
+        allowed_ip: "".to_string(),
+        required_passwd: Some(
+            secret_store
+                .get("HOS_PASSWD")
+                .expect("HOS_PASSWD not given")
+                .to_string(),
+        ),
+    });
+
+    log::warn!("Only accepting requests with the HOS_PASSWD provided in the Secrets.toml file.");
+
+    let config = move |cfg: &mut ServiceConfig| {
+        cfg.app_data(state.clone())
+            .service(handle_list_req)
+            .service(handle_sid_get)
+            .service(web::resource("/ws").route(web::get().to(hos_ws_route)))
+            .app_data(web::Data::new(tx.clone()));
+    };
+
+    return Ok(config.into());
 }

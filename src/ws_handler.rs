@@ -54,16 +54,18 @@ pub async fn hos_ws(
                                         .pairing_code = pairing_code.clone();
                                     log::info!(
                                         "Paired with pairing code {}, session ID {}",
-                                        pairing_code
-                                            .clone()
-                                            .unwrap_or("[no pairing code]".to_string()),
+                                        /*pairing_code
+                                        .clone()
+                                        .unwrap_or("[no pairing code]".to_string())*/
+                                        "[redacted]",
                                         connection_id.to_string()
                                     );
                                     drop(write);
                                 }
                                 "response" => {
                                     log::info!("Response received from pairing code {}, request ID {}, session ID {}",
-                                            pairing_code.clone().unwrap_or("[no pairing code]".to_string()),
+                                            /*pairing_code.clone().unwrap_or("[no pairing code]".to_string())*/
+                                            "[redacted]",
                                             incoming.clone().id.unwrap_or("[no id]".to_string()),
                                             connection_id.to_string()
                                         );
